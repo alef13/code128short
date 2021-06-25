@@ -6,11 +6,11 @@ class code128 {
     private $text = '';
     private $mode = 'Auto';
     private $len = 1;
-    private $leafB = NULL, $leafC = NULL, $parent = NULL, $minCode = NULL;
+    private $leafA = NULL, $leafB = NULL, $leafC = NULL, $parent = NULL, $minCode = NULL;
 
     public function __construct($text, $mode = 'Auto', $parent = NULL)
     {
-	global $symCode;
+	global $symCodeA, $symCodeB, $symCodeC;
 	$this->parent = $parent;
 	$this->text = $text;
 	$this->mode = $mode;
@@ -20,20 +20,28 @@ class code128 {
 	    if($this->parent->mode != $mode) $this->len++;
 	}
 
-	if($mode == 'B') list($this->code, $text) = sscanf($text, '%c%s');
-	if($mode == 'C') list($this->code, $text) = sscanf($text, '%2d%s');
+	if($mode === 'A' || $mode === 'B') list($this->code, $text) = sscanf($text, '%c%s');
+	if($mode === 'C') list($this->code, $text) = sscanf($text, '%2d%s');
 
-	if(strlen($text)>0)
-	    if(array_key_exists(substr($text, 0, 1), $symCode)) $this->leafB = new code128($text, 'B', $this);
-	if(strlen($text)>1)
-	    if(array_key_exists(substr($text, 0, 2), $symCode)) $this->leafC = new code128($text, 'C', $this);
-
-	if($this->leafB == NULL && $this->leafC == NULL) $this->minCode = $this;
-	else {
-	    $this->minCode = ($this->leafB != NULL) ? $this->leafB->minCode : $this->leafC->minCode;
-	    if($this->leafC != NULL)
-		if($this->minCode->len > $this->leafC->minCode->len) $this->minCode = $this->leafC->minCode;
+	if(strlen($text) > 0) {
+	    if(array_key_exists(substr($text, 0, 1), $symCodeA)) $this->leafA = new code128($text, 'A', $this);
+	    if(array_key_exists(substr($text, 0, 1), $symCodeB)) $this->leafB = new code128($text, 'B', $this);
+	    if(strlen($text)>1)
+		if(array_key_exists(substr($text, 0, 2), $symCodeC)) $this->leafC = new code128($text, 'C', $this);
 	}
+
+	// выборы минимального потомка
+	$lA = ($this->leafA == NULL) ? PHP_INT_MAX : $this->leafA->minCode->len;
+	$lB = ($this->leafB == NULL) ? PHP_INT_MAX : $this->leafB->minCode->len;
+	$lC = ($this->leafC == NULL) ? PHP_INT_MAX : $this->leafC->minCode->len;
+
+	if ($lA < $lB && $lA < $lC) $this->minCode = $this->leafA->minCode;
+	else
+	    if ($lB < $lC) $this->minCode = $this->leafB->minCode;
+	    else
+		if ($this->leafC != NULL) $this->minCode = $this->leafC->minCode;
+
+	if($this->minCode == NULL)  $this->minCode = $this;
 
 	return $this;
     }
@@ -71,10 +79,31 @@ class code128 {
 	return $posX;
     }
 
+    public function dump()
+    {
+	global $symCodeA, $symCodeB, $symCodeC;
+	global $barPattern;
+
+	$s = $this->getCode();
+
+	$start = array_pop($s);
+	echo $start . "\n";
+
+	while(!empty($s)) {
+	    $code = array_pop($s);
+	    echo $code . "\n";
+	}
+	echo "CheckSum\n";
+	echo "Stop\n";
+    }
+
     public function printSVG($resolution=1, $height=50)
     {
-	global $symCode;
+	global $symCodeA, $symCodeB, $symCodeC;
 	global $barPattern;
+	
+	$tbl = array('StartA' => $symCodeA, 'StartB' => $symCodeB, 'StartC' => $symCodeC,
+	    'CodeA' => $symCodeA, 'CodeB' => $symCodeB, 'CodeC' => $symCodeC);
 
 	$s = $this->getCode();
 
@@ -84,16 +113,20 @@ class code128 {
 
 	echo "<svg xmlns='http://www.w3.org/2000/svg' width='$width' height='$height'>\n";
 
-	$start = $symCode[array_pop($s)];
+	$c = array_pop($s);
+	$symCode = $tbl[$c];
+	$start = $symCode[$c]; // same start symbol in all tables
 	$checksum = $start;
 
 	$offset = $this->printPattern($barPattern[$start], $offset, $resolution, $height);
 
 	while(!empty($s)) {
-	    $code = $symCode[array_pop($s)];
+	    $c = array_pop($s);
+	    $code = $symCode[$c];
 	    $offset = $this->printPattern($barPattern[$code], $offset, $resolution, $height);
 	    $checksum += $code*$pos;
 	    $pos++;
+	    if(array_key_exists($c, $tbl)) $symCode = $tbl[$c];
 	}
 
 	$offset = $this->printPattern($barPattern[$checksum%103], $offset, $resolution, $height);
